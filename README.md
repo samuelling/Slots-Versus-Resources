@@ -1,6 +1,6 @@
 # Pinball Party
 
-2-4 phones, one shared pinball arena. Slide your finger to move your paddle and keep the puck out of your goal; swipe fast to smash it.
+2-4 phones. Your whole phone is your own pinball table: tap the **left or right half** of the screen to work that flipper. Shoot the ball out the top and it flies into the **NULL ZONE**, a shared arena between everyone, where each phone controls something different and weird. Whatever happens to the ball there decides how hard it hits the next table.
 
 ## Play
 
@@ -12,21 +12,35 @@ Open the game's web page on every phone (no app, no install).
 
 The first person in the room is the **host**: their phone runs the game, so they should keep the screen on (the game asks the phone to stay awake). If the host leaves, the next person takes over and the game carries on.
 
-## The arena
+On iPhone, tap **Allow** when asked about motion: you need it for the tilt role.
 
-- Three chutes lead to three kinds of portal, and they change places every 9 seconds:
-  - **Wormhole (teal):** teleports the puck out of another chute in a random direction.
-  - **Cannon (orange):** fires the puck hard at a random opponent of whoever hit it last.
-  - **Vault (gold):** +25 points to the last toucher, then releases the puck at calm speed.
-- Bumpers score a point for whoever last touched the puck. Putting the puck in someone's goal scores 10. Everyone starts with 3 lives.
+## Your table
+
+Two flippers, four bumpers, and an opening at the top leading to the null zone. Let the ball drain past your flippers and you lose a life (3 each). Shoot it out the top and it becomes someone else's problem; when it drains on their table, you score 10 (15 if it was red hot).
+
+## The null zone
+
+Every time the ball enters (and every 8 seconds while it is there) everyone is handed a new, random role:
+
+- **Dog:** slide to aim a stream of pee that shoves the ball along.
+- **Fan:** slide to aim, hold to blast wind.
+- **Zapper:** tap to turn the ball into slow, sticky goo (6 s cooldown).
+- **Tilt:** tilt your phone to lean the whole arena (drag your finger if there is no motion sensor).
+- **Bumper:** drag a bumper around the arena.
+
+Three chutes (they shuffle places) lead to portals: **wormhole** (teleports the ball), **cannon** (fires it hard) and **vault** (+25 points).
+
+**What it does to the next table:** a ball that got knocked around (bumpers, streams, wind, cannon) arrives **hot**: fast and wobbly. A zapped ball arrives as **goo**: slow, heavy and an easy save.
+
+The null zone is painted in a **different art style every visit**: Neon Arcade, Pointillism, Impressionism, Illuminated Manuscript, 8-bit and Pop Art. The host picks the style so everyone sees the same one. Add `?style=0` to `5` to the page address to pin one.
 
 ## How it works
 
-Static files only, hosted on GitHub Pages. Phones talk through the same small Cloudflare relay that Crush Commando and Brick Ninja use (`wss://crush-commando-mp.samuelling.workers.dev`), which just passes messages around a room. The host's phone runs the physics (`sim.js`) and broadcasts snapshots about 30 times a second (`net.js`); guests send their paddle position and draw what they get back. Nothing to deploy or run.
+Static files only, hosted on GitHub Pages. Phones talk through the same small Cloudflare relay that Crush Commando and Brick Ninja use (`wss://crush-commando-mp.samuelling.workers.dev`), which just passes messages around a room. The host's phone runs the physics (`sim.js`) and broadcasts snapshots about 30 times a second (`net.js`); guests send their touches and tilt and draw what they get back. Nothing to deploy or run.
 
-- `index.html`: lobby, drawing, touch input, sound
+- `index.html`: lobby, table and null zone drawing (including the art styles), touch and motion input, sound
 - `net.js`: rooms, host selection, host hand-over
-- `sim.js`: the game engine
+- `sim.js`: the game engine (tables, null zone, roles, carry-over). Tuning constants are at the top.
 - `test/`: `node test/sim-test.mjs` (engine) and `node test/e2e.mjs` (simulated phones through the real relay)
 
 To try it on your own computer: `python3 -m http.server`, then open http://localhost:8000. Add `?server=ws://...` to use a different relay.

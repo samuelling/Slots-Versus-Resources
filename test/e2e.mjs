@@ -21,8 +21,8 @@ function makeBot(i, skill) {
       maxBytes = Math.max(maxBytes, JSON.stringify(snap).length);
       const me = snap.pl.find((p) => p.id === bot.sess.myId);
       if (!me || me.s < 0 || !me.a || snap.ph === 'lobby') return;
-      const [u] = toLocal(me.s, snap.ball.x, snap.ball.y);
-      bot.sess.sendPaddle(clamp(u + (Math.random() - 0.5) * (1 - skill) * 600, 320, 680));
+      const mine = snap.ball.w === 't' && snap.ball.o === me.s, low = mine && snap.ball.y > 760;
+      bot.sess.sendControl({ l: low && snap.ball.x < 260 ? 1 : 0, r: low && snap.ball.x >= 240 ? 1 : 0, d: Math.random() < 0.1 ? 1 : 0, x: Math.random(), y: Math.random(), tx: 0, ty: 0 });
     },
     onClosed: (why) => { bot.closed = why; },
   });

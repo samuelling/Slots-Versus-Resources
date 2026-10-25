@@ -119,8 +119,8 @@ export class Session {
         if (e.k === 's') {
           // a snapshot, accepted only from whoever is the host
           if (!this.sim && m.id === this.hostId) { this.snap = e; this.onState(e); }
-        } else if (e.k === 'p' && this.sim) {
-          this.sim.setPaddle(m.id, e.u);
+        } else if (e.k === 'c' && this.sim) {
+          this.sim.setControl(m.id, e);
         }
       }
     }
@@ -170,9 +170,12 @@ export class Session {
 
   // ---------- actions from this phone ----------
 
-  sendPaddle(u) {
-    if (this.sim) this.sim.setPaddle(this.myId, u);
-    else if (this.joined) this.send({ k: 'p', u: Math.round(u) }, this.hostId);
+  // c = { l, r, d, x, y, tx, ty }: flipper buttons, finger (0..1 across the arena), and phone tilt
+  sendControl(c) {
+    if (this.sim) { this.sim.setControl(this.myId, c); return; }
+    if (!this.joined) return;
+    const q = (v) => Math.round(v * 1000) / 1000;
+    this.send({ k: 'c', l: c.l ? 1 : 0, r: c.r ? 1 : 0, d: c.d ? 1 : 0, x: q(c.x), y: q(c.y), tx: q(c.tx), ty: q(c.ty) }, this.hostId);
   }
 
   start() {
