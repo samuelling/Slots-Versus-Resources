@@ -1,4 +1,4 @@
-// Networking for Pinball Party: host-runs-it, over the same tiny Cloudflare relay that
+// Networking for Slots Versus Resources: host-runs-it, over the same tiny Cloudflare relay that
 // Crush Commando and Brick Ninja use. The relay only passes messages around a room.
 //
 // The player who joined the room first is the host. Their phone runs the game (a Sim)

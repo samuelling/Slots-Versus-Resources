@@ -1,4 +1,4 @@
-// Pinball Party game engine. Pure logic: no networking, no timers, no DOM.
+// Slots Versus Resources game engine. Pure logic: no networking, no timers, no DOM.
 // The host's phone runs one Sim; everyone else just renders its snapshots.
 //
 // Every player has their own pinball TABLE (a portrait playfield with two flippers).

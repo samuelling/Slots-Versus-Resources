@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d1a">
-<title>Pinball Party</title>
+<title>Slots Versus Resources</title>
 <style>
   :root { --bg:#0b0d1a; --fg:#e8ecff; --dim:#7f88b5; --c0:#ff5c8a; --c1:#5cc8ff; --c2:#ffd25c; --c3:#7dff9a; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -12,7 +12,7 @@
   canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
   .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; background:rgba(11,13,26,.92); text-align:center; z-index:5; }
   .screen.hidden { display:none; }
-  h1 { margin:0 0 4px; font-size:34px; letter-spacing:.5px; }
+  h1 { margin:0 0 4px; font-size:30px; letter-spacing:.5px; line-height:1.1; max-width:320px; }
   h1 span { color:var(--c0); }
   p { margin:0; color:var(--dim); font-size:15px; max-width:320px; line-height:1.4; }
   input, button { font:inherit; font-size:18px; border-radius:14px; border:2px solid #2a3060; background:#141937; color:var(--fg); padding:13px 16px; width:260px; text-align:center; outline:none; }
@@ -43,7 +43,7 @@
 <div id="toast"></div>
 
 <div class="screen" id="home">
-  <h1>Pinball <span>Party</span></h1>
+  <h1>Slots <span>Versus</span> Resources</h1>
   <p>Your whole phone is a pinball table: tap the left and right halves to flip. Shoot the ball out the top and it flies into the NULL ZONE, where everyone controls something weird. What happens to it there decides how hard it hits the next table.</p>
   <input id="name" placeholder="Your name" maxlength="12" autocomplete="off">
   <p id="invite" style="display:none"></p>
@@ -78,14 +78,15 @@ import { T, ROLES } from './sim.js';
   const tw = (s, u, d) => s === 0 ? [u, 1000 - d] : s === 1 ? [1000 - d, 1000 - u] : s === 2 ? [1000 - u, d] : [d, u]; // side-local -> null-zone world
 
   // ---------- the null zone is painted in a different art style each visit ----------
-  const STYLE_NAMES = ['Neon Arcade', 'Pointillism', 'Impressionism', 'Illuminated Manuscript', '8-bit', 'Pop Art'];
+  const STYLE_NAMES = ['Neon Arcade', 'Pointillism', 'Impressionism', 'Illuminated Manuscript', '16-bit', 'Pop Art'];
+  const FIXED_STYLE = 4;   // the null zone is always 16-bit for now; ?styles=random turns the random art styles back on
   const STYLE_WAVE = ['square', 'sine', 'sine', 'triangle', 'square', 'sawtooth'];
   const PAL = [
     { bg1: '#171c3d', bg2: '#0d1026', wall: '#6a74c9', glow: 18, b1: '#ffd0f0', b2: '#a23bd8', bglow: '#d04bff', ball: '#ffffff', text: '#e8ecff', pee: '#ffe45c', fan: '#8fe3ff', zap: '#b58cff', goo: '#8cff5a', cols: COLORS, grid: 'rgba(120,140,255,.07)', hole: '#04070f', font: 'system-ui, sans-serif' },
     { bg1: '#f6efd8', bg2: '#efe6c8', wall: '#2f56a8', glow: 0, b1: '#ffc04d', b2: '#e8541f', ball: '#ffffff', text: '#2a2a2a', pee: '#f2d11e', fan: '#3aa0c8', zap: '#8a4fc9', goo: '#3aa860', cols: ['#e0446a', '#2f8fd8', '#f2b21e', '#3aa860'], hole: '#1d2a55', font: 'system-ui, sans-serif', n: 58 },
     { bg1: '#a9cfdc', bg2: '#c9b8e0', wall: '#5b7fb5', glow: 0, b1: '#fff0c8', b2: '#e59aa8', ball: '#fffdf2', text: '#33335a', pee: '#f4e28a', fan: '#d6eef6', zap: '#a98bd9', goo: '#9ccf7e', cols: ['#e7788f', '#6aa6d6', '#f1cd6a', '#8cc58a'], hole: '#43507a', font: 'system-ui, sans-serif', n: 72 },
     { bg1: '#ecdca9', bg2: '#d3b97a', wall: '#3b2412', glow: 0, lw: 5, ink: '#2a170a', b1: '#e8c04a', b2: '#a8801a', ball: '#f2c94c', text: '#2a170a', pee: '#e3c13a', fan: '#8aa5c9', zap: '#7a2a2a', goo: '#4f7d22', cols: ['#9b1c1c', '#1f3f8f', '#b8860b', '#2e6b34'], hole: '#2a170a', font: 'Georgia, "Times New Roman", serif', gold: true },
-    { bg1: '#1a1c2c', bg2: '#1a1c2c', wall: '#b13e53', glow: 0, b1: '#ffcd75', b2: '#ef7d57', ball: '#ffffff', text: '#f4f4f4', pee: '#ffcd75', fan: '#73eff7', zap: '#b13e53', goo: '#a7f070', cols: ['#ef7d57', '#41a6f6', '#ffcd75', '#a7f070'], hole: '#000000', font: '"Courier New", monospace', n: 84, grid: 'rgba(255,255,255,.06)' },
+    { bg1: '#1a1c2c', bg2: '#1a1c2c', wall: '#b13e53', glow: 0, b1: '#ffcd75', b2: '#ef7d57', ball: '#ffffff', text: '#f4f4f4', pee: '#ffcd75', fan: '#73eff7', zap: '#b13e53', goo: '#a7f070', cols: ['#ef7d57', '#41a6f6', '#ffcd75', '#a7f070'], hole: '#000000', font: '"Courier New", monospace', n: 128, grid: 'rgba(255,255,255,.06)' },
     { bg1: '#fff3a8', bg2: '#ffe56a', wall: '#111111', glow: 0, lw: 7, ink: '#111111', b1: '#ff4d6d', b2: '#ff4d6d', ball: '#ffffff', text: '#111111', pee: '#ffe600', fan: '#4dd0ff', zap: '#ffe600', goo: '#7dff00', cols: ['#ff4d6d', '#27a7ff', '#ffb800', '#35d07f'], hole: '#111111', font: 'Impact, "Arial Black", sans-serif', halftone: true },
   ];
 
@@ -138,7 +139,7 @@ import { T, ROLES } from './sim.js';
   $('start').onclick = () => sess && sess.start();
   $('share').onclick = async () => {
     const link = location.href.split('#')[0].split('?')[0] + '#' + code;
-    try { if (navigator.share) await navigator.share({ title: 'Pinball Party', text: 'Join my game: ' + code, url: link }); else { await navigator.clipboard.writeText(link); toast('Link copied'); } } catch {}
+    try { if (navigator.share) await navigator.share({ title: 'Slots Versus Resources', text: 'Join my game: ' + code, url: link }); else { await navigator.clipboard.writeText(link); toast('Link copied'); } } catch {}
   };
 
   // keep the screen on while playing (a sleeping host phone would freeze the game for everyone)
@@ -173,7 +174,8 @@ import { T, ROLES } from './sim.js';
   // ---------- state ----------
   const me = () => S && S.pl.find((p) => p.id === myId);
   const forcedStyle = qs.get('style') !== null ? Number(qs.get('style')) : null;   // ?style=0..5 pins the art style (for testing)
-  const style = () => (window.__forced != null ? window.__forced : forcedStyle !== null ? forcedStyle : (S && S.st) || 0) % PAL.length;
+  const randomStyles = qs.get('styles') === 'random';
+  const style = () => (window.__forced != null ? window.__forced : forcedStyle !== null ? forcedStyle : randomStyles ? (S && S.st) || 0 : FIXED_STYLE) % PAL.length;
   window.__pp = () => ({ mode: mode(), S });
 
   function onState(m) {
@@ -255,7 +257,7 @@ import { T, ROLES } from './sim.js';
       case 'zap': beep(1400, 0.35, 'sawtooth', 0.09, -1200); bolts.push({ side: ev[1], t: 0 }); break;
       case 'enter': beep(900, 0.25, 'sine', 0.08, -600); if (mine && mine.s === ev[1]) { buzz([30, 30, 50]); toast('Incoming! ' + incoming()); } break;
       case 'exit': beep(300, 0.3, 'sine', 0.08, 700); {
-        const s = style(); toast('NULL ZONE: ' + STYLE_NAMES[s]);
+        if (randomStyles) toast('NULL ZONE: ' + STYLE_NAMES[style()]);
       } break;
       case 'drain': beep(200, 0.6, 'sawtooth', 0.1, -150); if (mine && mine.s === ev[1]) buzz([80, 40, 120]); break;
       case 'roles': {
@@ -343,7 +345,14 @@ import { T, ROLES } from './sim.js';
     const col = COLORS[side] || '#fff';
     const { left, top, k } = L.table;
     const owner = S.pl.find((p) => p.s === side);
-    ctx.save(); ctx.translate(left, top); ctx.scale(k, k);
+    ctx.save();
+    if (mineT) { ctx.translate(left, top); ctx.scale(k, k); }
+    else {
+      // someone else's table: turned so their flippers face their edge of the arena, as seen from my seat
+      const mySide = (me() && me().s >= 0) ? me().s : 0, rel = (side - mySide + 4) % 4, sideways = rel % 2 === 1;
+      const kk = sideways ? Math.min((innerWidth - 8) / 1000, L.areaH / 500) : k;
+      ctx.translate(innerWidth / 2, L.top + L.areaH / 2); ctx.rotate(-rel * Math.PI / 2); ctx.scale(kk, kk); ctx.translate(-250, -500);
+    }
     ctx.fillStyle = '#070914'; ctx.fillRect(0, 0, 500, 1000);
     // interior
     const g = ctx.createLinearGradient(0, 0, 0, 1000); g.addColorStop(0, '#1a2050'); g.addColorStop(1, '#0c1030');
@@ -401,9 +410,10 @@ import { T, ROLES } from './sim.js';
     ctx.restore();
     if (!mineT && owner) {
       ctx.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
-      ctx.fillStyle = 'rgba(11,13,26,.25)'; ctx.fillRect(left, top, 500 * k, 1000 * k);
-      ctx.fillStyle = col; ctx.font = '800 20px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(owner.n + "'s table", innerWidth / 2, top + 24);
+      ctx.font = '800 18px system-ui, sans-serif'; ctx.textAlign = 'center';
+      const lw = ctx.measureText(owner.n + "'s table").width + 24;
+      ctx.fillStyle = 'rgba(11,13,26,.85)'; roundRect(ctx, innerWidth / 2 - lw / 2, L.top + 4, lw, 30, 15); ctx.fill();
+      ctx.fillStyle = col; ctx.fillText(owner.n + "'s table", innerWidth / 2, L.top + 25);
     }
   }
 
@@ -669,8 +679,7 @@ import { T, ROLES } from './sim.js';
     }
     ctx.textBaseline = 'alphabetic';
     // style caption
-    ctx.fillStyle = 'rgba(127,136,181,.9)'; ctx.font = '600 11px ' + P.font; ctx.textAlign = 'right';
-    ctx.fillText('in the style of ' + STYLE_NAMES[st], left + A - 4, top + A + 14);
+    
   }
 
   // ---------- HUD + banner ----------

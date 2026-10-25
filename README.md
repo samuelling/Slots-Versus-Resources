@@ -1,4 +1,4 @@
-# Pinball Party
+# Slots Versus Resources
 
 2-4 phones. Your whole phone is your own pinball table: tap the **left or right half** of the screen to work that flipper. Shoot the ball out the top and it flies into the **NULL ZONE**, a shared arena between everyone, where each phone controls something different and weird. Whatever happens to the ball there decides how hard it hits the next table.
 
@@ -32,7 +32,7 @@ Three chutes (they shuffle places) lead to portals: **wormhole** (teleports the 
 
 **What it does to the next table:** a ball that got knocked around (bumpers, streams, wind, cannon) arrives **hot**: fast and wobbly. A zapped ball arrives as **goo**: slow, heavy and an easy save.
 
-The null zone is painted in a **different art style every visit**: Neon Arcade, Pointillism, Impressionism, Illuminated Manuscript, 8-bit and Pop Art. The host picks the style so everyone sees the same one. Add `?style=0` to `5` to the page address to pin one.
+The null zone has its own **16-bit pixel-art look**, so it feels like a different place. (The engine can also paint it in other art styles, such as pointillism or medieval, each visit; add `?styles=random` to the page address to see them.) When the ball is on someone else's table you watch it turned to face their edge of the arena, as if you were seeing it from your seat.
 
 ## How it works
 
