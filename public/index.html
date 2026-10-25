@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d1a">
+<title>Pinball Party</title>
+<style>
+  :root { --bg:#0b0d1a; --fg:#e8ecff; --dim:#7f88b5; --c0:#ff5c8a; --c1:#5cc8ff; --c2:#ffd25c; --c3:#7dff9a; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: ui-rounded, system-ui, -apple-system, "Segoe UI", sans-serif; overflow:hidden; touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; background:rgba(11,13,26,.92); text-align:center; z-index:5; }
+  .screen.hidden { display:none; }
+  h1 { margin:0 0 4px; font-size:34px; letter-spacing:.5px; }
+  h1 span { color:var(--c0); }
+  p { margin:0; color:var(--dim); font-size:15px; max-width:320px; line-height:1.4; }
+  input, button { font:inherit; font-size:18px; border-radius:14px; border:2px solid #2a3060; background:#141937; color:var(--fg); padding:13px 16px; width:260px; text-align:center; outline:none; }
+  input:focus { border-color:var(--c1); }
+  button { background:var(--c0); border-color:var(--c0); color:#1b0710; font-weight:700; cursor:pointer; }
+  button.alt { background:#141937; border-color:#2a3060; color:var(--fg); }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; width:260px; }
+  .row input { width:150px; text-transform:uppercase; letter-spacing:4px; }
+  .row button { width:102px; padding:13px 0; }
+  .code { font-size:56px; font-weight:800; letter-spacing:10px; padding-left:10px; }
+  .plist { display:flex; flex-direction:column; gap:6px; width:260px; }
+  .chip { display:flex; justify-content:space-between; padding:9px 14px; border-radius:12px; background:#141937; border-left:6px solid var(--dim); font-size:16px; }
+  #toast { position:fixed; left:50%; top:18px; transform:translateX(-50%); background:#141937; border:1px solid #2a3060; padding:8px 14px; border-radius:12px; font-size:14px; z-index:9; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.on { opacity:1; }
+  #big { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:none; z-index:4; font-size:110px; font-weight:900; text-shadow:0 0 30px rgba(255,255,255,.35); }
+  #big small { font-size:20px; font-weight:600; color:var(--dim); text-shadow:none; }
+  #over { pointer-events:auto; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="big"></div>
+<div id="toast"></div>
+
+<div class="screen" id="home">
+  <h1>Pinball <span>Party</span></h1>
+  <p>One shared pinball arena. Slide your finger to move your paddle and keep the puck out of your goal. Swipe fast to smash it.</p>
+  <input id="name" placeholder="Your name" maxlength="12" autocomplete="off">
+  <button id="create">Create room</button>
+  <div class="row"><input id="codein" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters"><button class="alt" id="join">Join</button></div>
+</div>
+
+<div class="screen hidden" id="lobby">
+  <p>Room code</p>
+  <div class="code" id="lcode">----</div>
+  <button class="alt" id="share">Share invite link</button>
+  <div class="plist" id="plist"></div>
+  <p id="lhint">Waiting for players (2-4)...</p>
+  <button id="start" disabled>Start game</button>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const COLORS = ['#ff5c8a', '#5cc8ff', '#ffd25c', '#7dff9a'];
+  const W = 1000, PAD_HALF = 100, PAD_D = 44, LO = 220, HI = 780, PAD_MIN = 320, PAD_MAX = 680;
+  const BUMPERS = [[500,500,52],[330,340,32],[670,340,32],[330,660,32],[670,660,32]];
+  const LETTERS = 'ACDEFGHJKLMNPQRTUVWXY';
+  const CH_COL = ['#5cf0d0', '#ff9a3c', '#ffd24a']; // wormhole, cannon, vault
+
+  let ws = null, code = '', myId = sessionStorage.getItem('pp-id') || '', myName = localStorage.getItem('pp-name') || '';
+  let S = null, recvAt = 0, retry = 0, wantRoom = false;
+  let myU = 500, sentU = -1, trail = [], flashes = [], lastPhase = '';
+  let audio = null;
+
+  $('name').value = myName;
+  if (/^#[A-Za-z]{4}$/.test(location.hash)) $('codein').value = location.hash.slice(1).toUpperCase();
+
+  // ---------- connection ----------
+  function connect(c) {
+    code = c.toUpperCase(); wantRoom = true;
+    myName = ($('name').value.trim() || 'Player').slice(0, 12);
+    localStorage.setItem('pp-name', myName);
+    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/' + code;
+    ws = new WebSocket(url);
+    ws.onopen = () => { retry = 0; ws.send(JSON.stringify({ t: 'hello', name: myName, id: myId })); };
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.t === 'welcome') { myId = m.id; sessionStorage.setItem('pp-id', myId); history.replaceState(null, '', '#' + code); return; }
+      if (m.t === 's') onState(m);
+    };
+    ws.onclose = () => {
+      if (!wantRoom) return;
+      toast('Reconnecting...');
+      setTimeout(() => connect(code), Math.min(4000, 500 + retry++ * 700));
+    };
+    $('home').classList.add('hidden');
+    $('lobby').classList.remove('hidden');
+    $('lcode').textContent = code;
+  }
+  const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  $('create').onclick = () => { initAudio(); connect(Array.from({ length: 4 }, () => LETTERS[Math.floor(Math.random() * LETTERS.length)]).join('')); };
+  $('join').onclick = () => { initAudio(); const c = $('codein').value.trim(); if (c.length === 4) connect(c); else toast('Enter the 4-letter code'); };
+  $('start').onclick = () => send({ t: 'start' });
+  $('share').onclick = async () => {
+    const link = location.origin + '/#' + code;
+    try { if (navigator.share) await navigator.share({ title: 'Pinball Party', text: 'Join my game: ' + code, url: link }); else { await navigator.clipboard.writeText(link); toast('Link copied'); } } catch {}
+  };
+
+  // ---------- state ----------
+  const me = () => S && S.pl.find((p) => p.id === myId);
+
+  function onState(m) {
+    S = m; recvAt = performance.now();
+    const b = m.ball;
+    if (b.m === 'live') { trail.push([b.x, b.y]); if (trail.length > 12) trail.shift(); } else trail = [];
+    for (const ev of m.ev) handleEvent(ev);
+    if (m.ph !== lastPhase) { lastPhase = m.ph; updateScreens(); }
+    if (m.ph === 'lobby') updateLobby();
+  }
+
+  function updateScreens() {
+    $('lobby').classList.toggle('hidden', S.ph !== 'lobby');
+    updateOver();
+  }
+
+  function updateLobby() {
+    const list = $('plist'); list.innerHTML = '';
+    S.pl.filter((p) => p.on).forEach((p, i) => {
+      const d = document.createElement('div'); d.className = 'chip';
+      d.style.borderLeftColor = p.sp ? '#555' : COLORS[i % 4];
+      d.innerHTML = '<span></span><span style="color:var(--dim)"></span>';
+      d.children[0].textContent = p.n + (p.id === myId ? ' (you)' : '');
+      d.children[1].textContent = (p.id === S.host ? 'host' : '') + (p.sp ? ' watching' : '');
+      list.appendChild(d);
+    });
+    const n = S.pl.filter((p) => p.on && !p.sp).length;
+    const host = S.host === myId;
+    $('start').disabled = !(host && n >= 2);
+    $('start').style.display = host ? '' : 'none';
+    $('lhint').textContent = n < 2 ? 'Waiting for players (2-4)...' : host ? 'Ready when you are.' : 'Waiting for the host to start...';
+  }
+
+  function updateOver() {
+    const big = $('big');
+    if (S.ph === 'over') {
+      const w = S.pl.find((p) => p.id === S.win);
+      big.innerHTML = '<div style="font-size:54px">' + (w ? esc(w.n) + ' wins!' : 'Game over') + '</div>' + (S.host === myId ? '<button id="over">Play again</button>' : '<small>Waiting for host...</small>');
+      const btn = $('over'); if (btn) btn.onclick = () => send({ t: 'again' });
+      big.style.pointerEvents = 'auto';
+    } else { big.textContent = ''; big.style.pointerEvents = 'none'; }
+  }
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => el.classList.remove('on'), 1800); }
+
+  // ---------- audio + feedback ----------
+  function initAudio() { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } if (audio && audio.state === 'suspended') audio.resume(); }
+  function beep(f, d = 0.08, type = 'square', g = 0.07, slide = 0) {
+    if (!audio) return;
+    const t = audio.currentTime, o = audio.createOscillator(), a = audio.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + d);
+    a.gain.setValueAtTime(g, t); a.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(a).connect(audio.destination); o.start(t); o.stop(t + d + 0.02);
+  }
+  function handleEvent(ev) {
+    const mine = me();
+    switch (ev[0]) {
+      case 'hit': beep(380 + ev[1] * 90, 0.07, 'square'); if (mine && mine.s === ev[1]) navigator.vibrate && navigator.vibrate(12); break;
+      case 'bump': beep(820, 0.06, 'triangle', 0.08); flashes.push({ x: ev[1], y: ev[2], t: 0, c: '#fff' }); break;
+      case 'chute':
+        if (ev[2] === 'cannon') beep(110, 0.5, 'sawtooth', 0.07, 60);         // winding up
+        else if (ev[2] === 'vault') beep(660, 0.12, 'triangle', 0.07);         // coin
+        else beep(500, 0.25, 'sine', 0.08, -380);                              // wormhole suck
+        break;
+      case 'out':
+        if (ev[3] === 'cannon') beep(90, 0.3, 'square', 0.12, 700);            // boom
+        else if (ev[3] === 'vault') beep(880, 0.15, 'triangle', 0.07, 400);
+        else beep(160, 0.25, 'sine', 0.08, 500);
+        flashes.push({ x: ev[1], y: ev[2], t: 0, c: CH_COL[['warp', 'cannon', 'vault'].indexOf(ev[3])] || '#9cf' });
+        break;
+      case 'vault':
+        beep(784, 0.12, 'triangle', 0.08); setTimeout(() => beep(988, 0.12, 'triangle', 0.08), 90); setTimeout(() => beep(1319, 0.2, 'triangle', 0.08), 180);
+        toast('JACKPOT +' + ev[1]); break;
+      case 'goal': beep(180, 0.5, 'sawtooth', 0.1, -120); flashes.push({ side: ev[1], t: 0 }); if (mine && mine.s === ev[1]) navigator.vibrate && navigator.vibrate([60, 40, 90]); break;
+      case 'shuffle': beep(300, 0.2, 'triangle', 0.06, 200); toast('Chutes shuffled!'); break;
+      case 'over': beep(260, 0.8, 'triangle', 0.1, 260); break;
+    }
+  }
+
+  // ---------- input ----------
+  let layout = { left: 0, top: 0, A: 300, k: 0.3 };
+  function setU(clientX) { const f = (clientX - layout.left) / layout.A; myU = Math.max(PAD_MIN, Math.min(PAD_MAX, f * W)); }
+  const canPlay = () => { const m = me(); return S && m && m.s >= 0 && m.a && (S.ph === 'playing' || S.ph === 'countdown'); };
+  let dragging = false;
+  addEventListener('pointerdown', (e) => { initAudio(); if (e.target.closest('.screen,button,input')) return; dragging = true; setU(e.clientX); });
+  addEventListener('pointermove', (e) => { if (dragging) setU(e.clientX); });
+  addEventListener('pointerup', () => { dragging = false; });
+  addEventListener('pointercancel', () => { dragging = false; });
+  setInterval(() => { if (canPlay() && Math.abs(myU - sentU) > 0.5) { sentU = myU; send({ t: 'paddle', u: Math.round(myU * 10) / 10 }); } }, 25);
+
+  // ---------- rendering ----------
+  function resize() {
+    const dpr = Math.min(3, devicePixelRatio || 1);
+    cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+    const hud = 84;
+    const A = Math.min(innerWidth - 8, (innerHeight - hud - 60) );
+    layout = { A, left: (innerWidth - A) / 2, top: hud, k: A / W, dpr };
+  }
+  addEventListener('resize', resize); resize();
+
+  function drawSideFrame(s, fn) {
+    ctx.save(); ctx.translate(500, 500); ctx.rotate(-s * Math.PI / 2); ctx.translate(-500, -500); fn(); ctx.restore();
+  }
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const { dpr, k, left, top, A } = layout;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#0b0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (!S) return;
+
+    drawHud(dpr);
+
+    const mine = me();
+    const mySide = mine && mine.s >= 0 ? mine.s : 0;
+    ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * left, dpr * top);
+    ctx.save();
+    ctx.translate(500, 500); ctx.rotate(mySide * Math.PI / 2); ctx.translate(-500, -500);
+
+    // floor
+    const g = ctx.createRadialGradient(500, 500, 50, 500, 500, 720);
+    g.addColorStop(0, '#171c3d'); g.addColorStop(1, '#0d1026');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, W);
+    ctx.strokeStyle = 'rgba(120,140,255,.07)'; ctx.lineWidth = 2;
+    for (let i = 100; i < W; i += 100) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, W); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke(); }
+
+    const open = [false, false, false, false], names = [];
+    for (const p of S.pl) if (p.s >= 0) { open[p.s] = !!p.a; names[p.s] = p; }
+
+    // walls with goal mouths
+    ctx.lineCap = 'round'; ctx.lineWidth = 10;
+    for (let s = 0; s < 4; s++) {
+      drawSideFrame(s, () => {
+        const p = names[s];
+        ctx.strokeStyle = '#6a74c9'; ctx.shadowColor = '#6a74c9'; ctx.shadowBlur = 14;
+        ctx.beginPath();
+        if (open[s]) { ctx.moveTo(0, W); ctx.lineTo(LO, W); ctx.moveTo(HI, W); ctx.lineTo(W, W); }
+        else { ctx.moveTo(0, W); ctx.lineTo(W, W); }
+        ctx.stroke();
+        if (open[s]) {
+          const c = COLORS[s];
+          ctx.shadowColor = c; ctx.shadowBlur = 24; ctx.strokeStyle = c; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.moveTo(LO, W + 3); ctx.lineTo(HI, W + 3); ctx.stroke(); ctx.lineWidth = 10;
+          // paddle
+          const u = (mine && p && p.id === myId) ? myU : S.pads[s];
+          if (u != null) {
+            ctx.shadowBlur = 20; ctx.fillStyle = c;
+            roundRect(u - PAD_HALF, W - PAD_D - 8, PAD_HALF * 2, 16, 8); ctx.fill();
+          }
+        }
+        ctx.shadowBlur = 0;
+      });
+    }
+
+    // goal flashes
+    for (const f of flashes) {
+      f.t += 1 / 60;
+      if (f.side != null) {
+        drawSideFrame(f.side, () => { ctx.fillStyle = 'rgba(255,255,255,' + Math.max(0, 0.5 - f.t) + ')'; ctx.fillRect(LO, W - 120, HI - LO, 120); });
+      } else {
+        ctx.strokeStyle = f.c; ctx.globalAlpha = Math.max(0, 1 - f.t * 3); ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(f.x, f.y, 20 + f.t * 160, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+      }
+    }
+    flashes = flashes.filter((f) => f.t < 0.6);
+
+    // bumpers
+    for (const [x, y, r] of BUMPERS) {
+      const bg = ctx.createRadialGradient(x - r * .3, y - r * .3, r * .1, x, y, r);
+      bg.addColorStop(0, '#ffd0f0'); bg.addColorStop(1, '#a23bd8');
+      ctx.shadowColor = '#d04bff'; ctx.shadowBlur = 24; ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(x, y, r - 8, 0, 7); ctx.stroke();
+    }
+
+    // chutes
+    const pulse = 0.5 + 0.5 * Math.sin(now / (S.warn ? 70 : 350));
+    for (const [x, y, t] of S.ch) {
+      const col = CH_COL[t] || '#5cf0d0';
+      ctx.strokeStyle = S.warn ? `rgba(255,120,120,${0.4 + pulse * 0.6})` : col; ctx.lineWidth = 6;
+      ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 18;
+      ctx.beginPath(); ctx.arc(x, y, 26, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.fillStyle = '#04070f'; ctx.beginPath(); ctx.arc(x, y, 20, 0, 7); ctx.fill();
+      ctx.save(); ctx.translate(x, y); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 3;
+      if (t === 0) {            // wormhole: breathing rings
+        ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(0, 0, 12 + pulse * 5, 0, 7); ctx.stroke();
+        ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.arc(0, 0, 5, 0, 7); ctx.stroke();
+      } else if (t === 1) {     // cannon: spinning arrowhead
+        ctx.rotate(now / 500);
+        ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(9, 8); ctx.lineTo(-9, 8); ctx.closePath(); ctx.fill();
+      } else {                  // vault: gleaming diamond
+        ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(11, 0); ctx.lineTo(0, 13); ctx.lineTo(-11, 0); ctx.closePath();
+        ctx.globalAlpha = 0.55 + pulse * 0.45; ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // ball
+    const b = S.ball, dt = Math.min(0.06, (now - recvAt) / 1000);
+    if (b.m === 'live') {
+      for (let i = 0; i < trail.length; i++) {
+        ctx.fillStyle = `rgba(255,255,255,${(i / trail.length) * 0.25})`;
+        ctx.beginPath(); ctx.arc(trail[i][0], trail[i][1], 14 * (i / trail.length), 0, 7); ctx.fill();
+      }
+    }
+    if (b.m !== 'tube') {
+      const bx = b.m === 'live' ? b.x + b.vx * dt : b.x, by = b.m === 'live' ? b.y + b.vy * dt : b.y;
+      const lt = S.pl.find((p) => p.id === S.lt);
+      const col = lt && lt.s >= 0 ? COLORS[lt.s] : '#ffffff';
+      ctx.shadowColor = col; ctx.shadowBlur = 26; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(bx, by, 14 * (b.m === 'serve' ? 1 + 0.15 * Math.sin(now / 90) : 1), 0, 7); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = col; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(bx, by, 14, 0, 7); ctx.stroke();
+    }
+
+    // names near each goal (kept upright for the viewer)
+    ctx.restore();
+    ctx.save();
+    ctx.translate(500, 500); ctx.rotate(mySide * Math.PI / 2); ctx.translate(-500, -500);
+    for (let s = 0; s < 4; s++) {
+      const p = names[s]; if (!p || !p.a) continue;
+      const wp = sideLabelPos(s);
+      ctx.save(); ctx.translate(wp[0], wp[1]); ctx.rotate(-mySide * Math.PI / 2);
+      ctx.fillStyle = COLORS[s]; ctx.globalAlpha = 0.85; ctx.font = '700 28px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(p.id === myId ? 'YOU' : p.n, 0, 0); ctx.restore();
+    }
+    ctx.restore();
+
+    // countdown / hint overlays on the canvas layer
+    const big = $('big');
+    if (S.ph === 'countdown') big.textContent = Math.max(1, Math.ceil(S.cd - 0.5));
+    else if (S.ph === 'playing' && b.m === 'serve') big.textContent = '';
+    else if (S.ph === 'playing' || S.ph === 'lobby') { if (!big.querySelector('button')) big.textContent = ''; }
+
+    // touch strip hint
+    if (canPlay()) {
+      const y = top + A + 20;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(left, y, A, 44);
+      ctx.fillStyle = '#7f88b5'; ctx.font = '600 14px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('slide anywhere to move your paddle', innerWidth / 2, y + 22);
+      ctx.fillStyle = COLORS[mySide]; ctx.fillRect(left + (myU / W) * A - 14, y + 38, 28, 6);
+    } else if (S.ph === 'playing' && mine && mine.s >= 0 && !mine.a) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#7f88b5'; ctx.font = '600 16px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('You are out - watch the finish!', innerWidth / 2, top + A + 40);
+    }
+  }
+
+  // label spot just inside each goal, in world coordinates (0 bottom, 1 right, 2 top, 3 left)
+  function sideLabelPos(s) { return [[500, 925], [925, 500], [500, 75], [75, 500]][s]; }
+
+  function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+  function drawHud(dpr) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const players = S.pl.filter((p) => p.s >= 0);
+    if (!players.length) return;
+    const w = Math.min(innerWidth - 16, 440) / players.length;
+    const x0 = (innerWidth - w * players.length) / 2;
+    players.forEach((p, i) => {
+      const x = x0 + i * w, c = COLORS[p.s];
+      ctx.globalAlpha = p.a ? 1 : 0.35;
+      ctx.fillStyle = '#141937'; roundRect(x + 3, 18, w - 6, 56, 12); ctx.fill();
+      ctx.fillStyle = c; ctx.fillRect(x + 3, 18, 5, 56);
+      ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#e8ecff'; ctx.fillText((p.id === myId ? 'You' : p.n).slice(0, 9), x + 16, 26);
+      ctx.font = '600 13px system-ui, sans-serif'; ctx.fillStyle = '#7f88b5'; ctx.fillText(p.sc + ' pts', x + 16, 47);
+      for (let l = 0; l < 3; l++) { ctx.fillStyle = l < p.l ? c : 'rgba(255,255,255,.12)'; ctx.beginPath(); ctx.arc(x + w - 14 - l * 11, 34, 4, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
