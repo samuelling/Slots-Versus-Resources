@@ -1,14 +1,10 @@
 {
   "name": "pinball-party",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "test": "node test/bots.mjs"
-  },
-  "devDependencies": {
-    "wrangler": "^4"
+    "start": "python3 -m http.server 8000",
+    "test": "node test/sim-test.mjs && node test/e2e.mjs"
   }
 }

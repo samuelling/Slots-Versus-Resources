@@ -26,7 +26,7 @@
   .code { font-size:56px; font-weight:800; letter-spacing:10px; padding-left:10px; }
   .plist { display:flex; flex-direction:column; gap:6px; width:260px; }
   .chip { display:flex; justify-content:space-between; padding:9px 14px; border-radius:12px; background:#141937; border-left:6px solid var(--dim); font-size:16px; }
-  #toast { position:fixed; left:50%; top:18px; transform:translateX(-50%); background:#141937; border:1px solid #2a3060; padding:8px 14px; border-radius:12px; font-size:14px; z-index:9; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast { position:fixed; left:50%; bottom:64px; transform:translateX(-50%); background:#141937; border:1px solid #2a3060; padding:8px 14px; border-radius:12px; font-size:14px; z-index:9; opacity:0; transition:opacity .25s; pointer-events:none; }
   #toast.on { opacity:1; }
   #big { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:none; z-index:4; font-size:110px; font-weight:900; text-shadow:0 0 30px rgba(255,255,255,.35); }
   #big small { font-size:20px; font-weight:600; color:var(--dim); text-shadow:none; }
@@ -42,6 +42,8 @@
   <h1>Pinball <span>Party</span></h1>
   <p>One shared pinball arena. Slide your finger to move your paddle and keep the puck out of your goal. Swipe fast to smash it.</p>
   <input id="name" placeholder="Your name" maxlength="12" autocomplete="off">
+  <p id="invite" style="display:none"></p>
+  <button id="joinInvite" style="display:none">Join</button>
   <button id="create">Create room</button>
   <div class="row"><input id="codein" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters"><button class="alt" id="join">Join</button></div>
 </div>
@@ -55,7 +57,8 @@
   <button id="start" disabled>Start game</button>
 </div>
 
-<script>
+<script type="module">
+import { Session, DEFAULT_SERVER } from './net.js';
 (() => {
   const $ = (id) => document.getElementById(id);
   const cv = $('cv'), ctx = cv.getContext('2d');
@@ -65,51 +68,76 @@
   const LETTERS = 'ACDEFGHJKLMNPQRTUVWXY';
   const CH_COL = ['#5cf0d0', '#ff9a3c', '#ffd24a']; // wormhole, cannon, vault
 
-  let ws = null, code = '', myId = sessionStorage.getItem('pp-id') || '', myName = localStorage.getItem('pp-name') || '';
-  let S = null, recvAt = 0, retry = 0, wantRoom = false;
+  let code = '', myId = '', myName = '';
+  try { myName = localStorage.getItem('pp-name') || ''; } catch {}
+  let S = null, recvAt = 0, sess = null, lastHost = null, wakeLock = null;
   let myU = 500, sentU = -1, trail = [], flashes = [], lastPhase = '';
   let audio = null;
+  const qs = new URLSearchParams(location.search);
+  const inviteCode = /^#[A-Za-z]{4}$/.test(location.hash) ? location.hash.slice(1).toUpperCase() : '';
 
   $('name').value = myName;
-  if (/^#[A-Za-z]{4}$/.test(location.hash)) $('codein').value = location.hash.slice(1).toUpperCase();
+  if (inviteCode) {
+    $('codein').value = inviteCode;
+    $('invite').textContent = 'You are invited to room ' + inviteCode;
+    $('invite').style.display = ''; $('joinInvite').style.display = '';
+    $('joinInvite').textContent = 'Join room ' + inviteCode;
+    $('create').className = 'alt'; $('create').textContent = 'Start a new room instead';
+    $('codein').parentElement.style.display = 'none';
+  }
 
   // ---------- connection ----------
+  // The first player in a room is the host: their phone runs the game. Nothing to install or deploy.
   function connect(c) {
-    code = c.toUpperCase(); wantRoom = true;
+    code = c.toUpperCase();
     myName = ($('name').value.trim() || 'Player').slice(0, 12);
-    localStorage.setItem('pp-name', myName);
-    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/' + code;
-    ws = new WebSocket(url);
-    ws.onopen = () => { retry = 0; ws.send(JSON.stringify({ t: 'hello', name: myName, id: myId })); };
-    ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      if (m.t === 'welcome') { myId = m.id; sessionStorage.setItem('pp-id', myId); history.replaceState(null, '', '#' + code); return; }
-      if (m.t === 's') onState(m);
-    };
-    ws.onclose = () => {
-      if (!wantRoom) return;
-      toast('Reconnecting...');
-      setTimeout(() => connect(code), Math.min(4000, 500 + retry++ * 700));
-    };
+    try { localStorage.setItem('pp-name', myName); } catch {}
+    if (sess) sess.leave();
+    S = null; lastPhase = ''; lastHost = null; myId = '';
+    sess = new Session({ server: qs.get('server') || DEFAULT_SERVER, code, name: myName, onState, onClosed });
+    sess.connect();
+    history.replaceState(null, '', '#' + code);
     $('home').classList.add('hidden');
     $('lobby').classList.remove('hidden');
     $('lcode').textContent = code;
+    $('lhint').textContent = 'Connecting...';
+    $('plist').innerHTML = ''; $('start').style.display = 'none';
   }
-  const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+  function onClosed(why) {
+    sess = null; S = null; lastPhase = '';
+    $('lobby').classList.add('hidden'); $('home').classList.remove('hidden'); $('big').textContent = '';
+    $('codein').value = code;
+    toast(why === 'full' ? 'That room is full (4 players max)' : why === 'unreachable' ? "Couldn't reach the game server" : 'Connection lost. Tap Join to get back in.');
+  }
 
   $('create').onclick = () => { initAudio(); connect(Array.from({ length: 4 }, () => LETTERS[Math.floor(Math.random() * LETTERS.length)]).join('')); };
+  $('joinInvite').onclick = () => { initAudio(); connect(inviteCode); };
   $('join').onclick = () => { initAudio(); const c = $('codein').value.trim(); if (c.length === 4) connect(c); else toast('Enter the 4-letter code'); };
-  $('start').onclick = () => send({ t: 'start' });
+  $('start').onclick = () => sess && sess.start();
   $('share').onclick = async () => {
-    const link = location.origin + '/#' + code;
+    const link = location.href.split('#')[0].split('?')[0] + '#' + code;
     try { if (navigator.share) await navigator.share({ title: 'Pinball Party', text: 'Join my game: ' + code, url: link }); else { await navigator.clipboard.writeText(link); toast('Link copied'); } } catch {}
   };
+
+  // keep the screen on while playing (a sleeping host phone would freeze the game for everyone)
+  async function keepAwake() {
+    try {
+      if (!wakeLock && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      }
+    } catch {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S && (S.ph === 'playing' || S.ph === 'countdown')) keepAwake(); });
 
   // ---------- state ----------
   const me = () => S && S.pl.find((p) => p.id === myId);
 
   function onState(m) {
     S = m; recvAt = performance.now();
+    if (sess && sess.myId) myId = sess.myId;
+    if (m.host !== lastHost) { if (lastHost && m.host === myId) toast("You're the host now"); lastHost = m.host; }
+    if (m.ph === 'countdown' || m.ph === 'playing') keepAwake();
     const b = m.ball;
     if (b.m === 'live') { trail.push([b.x, b.y]); if (trail.length > 12) trail.shift(); } else trail = [];
     for (const ev of m.ev) handleEvent(ev);
@@ -124,7 +152,7 @@
 
   function updateLobby() {
     const list = $('plist'); list.innerHTML = '';
-    S.pl.filter((p) => p.on).forEach((p, i) => {
+    S.pl.filter((p) => !p.g).forEach((p, i) => {
       const d = document.createElement('div'); d.className = 'chip';
       d.style.borderLeftColor = p.sp ? '#555' : COLORS[i % 4];
       d.innerHTML = '<span></span><span style="color:var(--dim)"></span>';
@@ -132,11 +160,11 @@
       d.children[1].textContent = (p.id === S.host ? 'host' : '') + (p.sp ? ' watching' : '');
       list.appendChild(d);
     });
-    const n = S.pl.filter((p) => p.on && !p.sp).length;
+    const n = S.pl.filter((p) => !p.g && !p.sp).length;
     const host = S.host === myId;
     $('start').disabled = !(host && n >= 2);
     $('start').style.display = host ? '' : 'none';
-    $('lhint').textContent = n < 2 ? 'Waiting for players (2-4)...' : host ? 'Ready when you are.' : 'Waiting for the host to start...';
+    $('lhint').textContent = n < 2 ? (host ? 'Share the invite and wait for players (2-4). You are the host: keep this screen open.' : 'Waiting for players (2-4)...') : host ? 'Ready when you are. You are the host: keep this screen open.' : 'Waiting for the host to start...';
   }
 
   function updateOver() {
@@ -144,7 +172,7 @@
     if (S.ph === 'over') {
       const w = S.pl.find((p) => p.id === S.win);
       big.innerHTML = '<div style="font-size:54px">' + (w ? esc(w.n) + ' wins!' : 'Game over') + '</div>' + (S.host === myId ? '<button id="over">Play again</button>' : '<small>Waiting for host...</small>');
-      const btn = $('over'); if (btn) btn.onclick = () => send({ t: 'again' });
+      const btn = $('over'); if (btn) btn.onclick = () => sess && sess.again();
       big.style.pointerEvents = 'auto';
     } else { big.textContent = ''; big.style.pointerEvents = 'none'; }
   }
@@ -195,7 +223,7 @@
   addEventListener('pointermove', (e) => { if (dragging) setU(e.clientX); });
   addEventListener('pointerup', () => { dragging = false; });
   addEventListener('pointercancel', () => { dragging = false; });
-  setInterval(() => { if (canPlay() && Math.abs(myU - sentU) > 0.5) { sentU = myU; send({ t: 'paddle', u: Math.round(myU * 10) / 10 }); } }, 25);
+  setInterval(() => { if (canPlay() && Math.abs(myU - sentU) > 0.5) { sentU = myU; sess && sess.sendPaddle(myU); } }, 25);
 
   // ---------- rendering ----------
   function resize() {
